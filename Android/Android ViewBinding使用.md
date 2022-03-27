@@ -1,5 +1,3 @@
-[toc]
-
 ## 使用
 
 添加支持： `app` ->`build.gradle`（需要Android Studio 3.6版本及以上，22年了不会还有人没升吧,.,.,.）
@@ -16,17 +14,20 @@ android {
 ### Activity中使用
 
 ```kotlin
+class MainActivity : AppCompatActivity() {
+
     // 布局文件名称为 activity_main.xml
     private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
+        // 初始化viewBinding
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.textView.text = "hello viewBinding!"
+        binding.textView.text = "hello viewBinding~"
     }
+}
 ```
 
 
@@ -173,21 +174,22 @@ Caused by: java.lang.NullPointerException: Missing required view with ID: com.wa
 基本同Activity中使用一样，需要注意的下面代码中说明了
 
 ```kotlin
+class HomeFragment : Fragment() {
+
     private var _binding: FragmentHomeBinding? = null
     private val binding: FragmentHomeBinding get() = _binding!!
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
     ): View? {
-        // 初始化 FragmentHomeBinding
+        // 初始化 viewBinding
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        binding.textView.text = "hello viewBinding!"
+        binding.textView.text = "home fragment\nhello viewBinding~"
     }
 
     override fun onDestroyView() {
@@ -195,6 +197,7 @@ Caused by: java.lang.NullPointerException: Missing required view with ID: com.wa
         // 防止内存泄漏
         _binding = null
     }
+}
 ```
 
 ### RecyclerView.ViewHolder中使用
@@ -251,15 +254,14 @@ class MainAdapter : RecyclerView.Adapter<MainAdapter.MainViewHolder>() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val mainAdapter = MainAdapter()
-        binding.recyclerview.adapter = mainAdapter
-
-        val data = arrayListOf<String>()
-        val itemCount = mainAdapter.itemCount
-        for (i in itemCount until itemCount + 30) {
-            data.add("data::$i")
+        binding.recyclerview.adapter = MainAdapter().apply {
+            val data = arrayListOf<String>()
+            val itemCount = this.itemCount
+            for (i in itemCount until itemCount + 30) {
+                data.add("data::$i")
+            }
+            addData(data)
         }
-        mainAdapter.addData(data)
     }
 ```
 
@@ -267,29 +269,27 @@ class MainAdapter : RecyclerView.Adapter<MainAdapter.MainViewHolder>() {
 
 ```xml
 # activity_main.xml
-<androidx.recyclerview.widget.RecyclerView
+    <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerview"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager" />
+        android:layout_height="300dp"
+        app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+        app:layout_constraintTop_toBottomOf="@id/textView" />
 
 # item_main.xml
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="50dp"
-    android:gravity="center_vertical"
-    android:orientation="vertical"
-    android:paddingStart="16dp"
-    android:paddingTop="4dp"
-    android:paddingEnd="16dp"
-    android:paddingBottom="4dp">
+    android:layout_height="40dp"
+    android:gravity="center"
+    android:orientation="vertical">
 
     <TextView
         android:id="@+id/item_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="@string/app_name" />
+        tools:text="@string/app_name" />
 
 </LinearLayout>
 ```
@@ -299,6 +299,12 @@ class MainAdapter : RecyclerView.Adapter<MainAdapter.MainViewHolder>() {
 在不需要生成绑定类的根布局加上`tools:viewBindingIgnore="true"`，控件没有`android:id`同样也不会生成绑定。
 
 ## 封装
+
+### Activity 中封装
+
+#### 依托于基类
+
+方案一：
 
 ```kotlin
 abstract class BaseActivity<VB : ViewBinding> : AppCompatActivity() {
@@ -315,3 +321,112 @@ abstract class BaseActivity<VB : ViewBinding> : AppCompatActivity() {
 }
 ```
 
+方案二：
+
+```kotlin
+abstract class BaseActivity<VB : ViewBinding> : AppCompatActivity() {
+
+    fun AppCompatActivity.viewBinding(inflater: (LayoutInflater) -> VB) = lazy {
+        inflater(layoutInflater).apply { setContentView(root) }
+    }
+}
+
+class TwoActivity : BaseActivity<ActivityMainBinding>() {
+
+    /*private val binding by viewBinding {
+        ActivityMainBinding.inflate(it)
+    }*/
+    private val binding by viewBinding(ActivityMainBinding::inflate)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        binding.textView.text = "two\nhello viewBinding~"
+    }
+}
+```
+
+两种方案都差不多，方案一通过`getViewBinding()`抽象方法让基类去初始化`viewBinding`，方案二是利用`kotlin`可以传递函数特性，把`ViewBinding.inflate`的函数传递过去，让函数进行实例化，并利用`apply`高阶函数执行`Activity.setContentView()`加载布局，最终返回`ViewBinding`实例。
+
+#### 反射方式
+
+```kotlin
+abstract class BaseActivity<VB : ViewBinding> : AppCompatActivity() {
+
+    open val binding: VB by lazy {
+        val parameterizedType = javaClass.genericSuperclass as ParameterizedType
+        val clz = parameterizedType.actualTypeArguments[0] as Class<*>
+        val method = clz.getDeclaredMethod("inflate", LayoutInflater::class.java)
+        return@lazy method.invoke(null, layoutInflater) as VB
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(binding.root)
+    }
+}
+```
+
+viewBinding的初始化并不太麻烦，不建议用反射方式~
+
+### Fragment 中封装
+
+方案一：
+
+```kotlin
+abstract class BaseFragment<VB : ViewBinding> : Fragment() {
+
+    private var _binding: VB? = null
+    val binding: VB get() = _binding!!
+
+    override fun onCreateView(
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
+    ): View? {
+        _binding = getViewBinding()
+        return binding.root
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+
+    abstract fun getViewBinding(): VB
+}
+```
+
+方案二：
+
+```kotlin
+abstract class BaseFragment<VB : ViewBinding> : Fragment() {
+
+    private var _binding: VB? = null
+    open val binding: VB get() = _binding!!
+
+    override fun onCreateView(
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
+    ): View? {
+        val parameterizedType = javaClass.genericSuperclass as ParameterizedType
+        val clz = parameterizedType.actualTypeArguments[0] as Class<*>
+        val method = clz.getDeclaredMethod(
+            "inflate",
+            LayoutInflater::class.java,
+            ViewGroup::class.java,
+            Boolean::class.java
+        )
+        _binding = method.invoke(null, layoutInflater, container, false) as VB
+        return binding.root
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+}
+```
+
+viewBinding的初始化并不太麻烦，不建议用反射方式~
+
+### ViewHolder 中封装
+
+后续补充...
